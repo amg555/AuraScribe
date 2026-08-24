@@ -137,12 +137,26 @@ near-identity on clean, edge cases) + 77/0 overall. **Still owner-work:** real-r
 `strength` (1.5) tuning need a mic; a trained **Silero VAD** model is the heavier follow-up for hard
 non-stationary noise (nature sounds, overlapping speech) — this DSP layer handles *steady* noise.
 
-**Prompt-optimization engine — NOT built (deliberately).** Requested, but it requires an on-device
-instruct LLM (llama.cpp/GGUF — a heavy new build dep like whisper.cpp + a ~1 GB model download +
-seconds-per-generation latency) and, per this doc's own rule, "needs its own research + spec before
-any code." It can't be verified from the sandbox (no way to run generation), and shipping blind LLM
-code would violate the never-fake / verify-by-running non-negotiable. Next step is a spec + a POC the
-owner runs, not a blind commit.
+**Prompt-optimization engine — SPEC written, not yet built (2026-08-25).** Brainstormed with the owner
+and speced at `docs/superpowers/specs/2026-08-25-prompt-optimization-engine-design.md`. Decisions:
+**"optimize in place"** (not "dictate a prompt") — normal dictation inserts text, then a **floating
+button** (after dictation) or a **global hotkey** optimizes the recent text / current selection in
+place; **intent-adaptive** output (structured prompt / cleanup / both) that **never loses the original
+context**; **self-contained** (v1 uses only the selected/dictated text); **no preview window**; runtime
+**llama.cpp + Qwen2.5-1.5B-Instruct Q4 (~1 GB, Apache-2.0), optional download**, feature dormant until
+downloaded. Phase 1 = hotkey-on-selection POC the owner runs to judge speed/quality (llama.cpp build +
+generation are unverifiable from the sandbox). Awaiting the owner's spec review before an
+implementation plan.
+
+**CI + clipboard fixes (2026-08-25).** (1) `ci.yml` rust-tests went red with `unable to find library
+-lonnxruntime` — because **moonshine is a DEFAULT feature** so `cargo test` links the sherpa stack, and
+a warm rust-cache prunes sherpa-rs-sys's downloaded libs (green cold, red warm). Fixed with
+**`cache-targets: false`** (same as release.yml); verified green. (2) **Clipboard injection bug**
+(owner: "it pasted my clipboard, not what I said, sometimes") — the paste path restored the previous
+clipboard after a fixed 120 ms, so a target that read the clipboard a beat later pasted the OLD value.
+Now restores on a **background thread after 500 ms, only if the clipboard still holds our text**, and
+skips restore entirely if Ctrl+V didn't fire. Both Win + mac/linux paths; injection tests 2/0. Needs
+the on-device rebuild to confirm.
 
 ### 2026-08-18 — v2.0.0: cross-platform release CI goes green (Win/Mac/Linux) + macOS self-contained
 
