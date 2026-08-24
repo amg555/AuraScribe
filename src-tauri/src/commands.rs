@@ -23,6 +23,10 @@ pub struct Settings {
     /// When false, the global dictation hotkey is not registered — the app effectively "sleeps"
     /// and no keypress triggers recording until the user re-enables it in Settings. Default true.
     pub hotkey_enabled: bool,
+    /// When true, run spectral noise reduction (denoise.rs) over the audio before transcription to
+    /// cut steady background noise. Default false — safe, but opt-in since the benefit depends on
+    /// the user's mic and environment.
+    pub noise_suppression: bool,
 }
 
 /// Platform-appropriate default global shortcut. Always a modifier + a non-alphabet key (a bare
@@ -63,6 +67,7 @@ impl Default for Settings {
             // onboarded = 0 from the database (see `Database::new`), which is authoritative.
             onboarded: true,
             hotkey_enabled: true,
+            noise_suppression: false,
         }
     }
 }
@@ -122,6 +127,7 @@ async fn load_settings_from_db(db: &Database) -> Result<Settings, String> {
         sound_cues: row.sound_cues != 0,
         onboarded: row.onboarded != 0,
         hotkey_enabled: row.hotkey_enabled != 0,
+        noise_suppression: row.noise_suppression != 0,
     })
 }
 
@@ -162,6 +168,7 @@ pub async fn save_settings(
             sound_cues: settings.sound_cues as i32,
             onboarded: settings.onboarded as i32,
             hotkey_enabled: settings.hotkey_enabled as i32,
+            noise_suppression: settings.noise_suppression as i32,
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -209,6 +216,8 @@ async fn run_chunker(
     status: std::sync::Arc<tokio::sync::Mutex<Status>>,
     chunk_state: std::sync::Arc<tokio::sync::Mutex<crate::app_state::ChunkState>>,
     language: String,
+    // Whether to run spectral noise reduction over each chunk before transcription (user setting).
+    noise_suppression: bool,
     // Only split during recording when the model can keep pace with speech. For a slower
     // model, splitting cannot drain the backlog and each small chunk costs an extra
     // whisper 30-second window, so the whole recording is transcribed once at stop instead.
@@ -242,13 +251,13 @@ async fn run_chunker(
                 break;
             };
             let chunk: Vec<f32> = pending.drain(..idx).collect();
-            transcribe_chunk(&app, &asr, &status, &chunk_state, chunk, rate, &language).await;
+            transcribe_chunk(&app, &asr, &status, &chunk_state, chunk, rate, &language, noise_suppression).await;
         }
 
         if stopping {
             if !pending.is_empty() {
                 let tail = std::mem::take(&mut pending);
-                transcribe_chunk(&app, &asr, &status, &chunk_state, tail, rate, &language).await;
+                transcribe_chunk(&app, &asr, &status, &chunk_state, tail, rate, &language, noise_suppression).await;
             }
             break;
         }
@@ -266,11 +275,21 @@ async fn transcribe_chunk(
     chunk: Vec<f32>,
     rate: u32,
     language: &str,
+    noise_suppression: bool,
 ) {
     let resampled = crate::audio::resample_linear(&chunk, rate, 16000);
     if resampled.is_empty() {
         return;
     }
+
+    // Optional: subtract steady background noise (fans, AC, road hum) before anything else, so the
+    // silence detection below and the transcriber both see a cleaner signal. Safe on clean audio
+    // (near-identity when there is no steady noise); off unless the user enabled it. See denoise.rs.
+    let resampled = if noise_suppression {
+        crate::denoise::reduce_noise(&resampled, 1.5)
+    } else {
+        resampled
+    };
 
     // Strip dead air before Whisper sees it. Whisper is charged for silence exactly like
     // speech, so cutting the pauses and the gaps at each end is a real speed win on every
@@ -457,12 +476,12 @@ pub async fn start_recording(
     // Transcribe while the user speaks, so the wait after they stop is one chunk rather
     // than the whole recording. Works on any hardware - unlike GPU offload, which only
     // helps machines that have one.
-    let language = {
+    let (language, noise_suppression) = {
         let db = state.db.lock().await;
         load_settings_from_db(&db)
             .await
-            .map(|s| s.language)
-            .unwrap_or_else(|_| "en".to_string())
+            .map(|s| (s.language, s.noise_suppression))
+            .unwrap_or_else(|_| ("en".to_string(), false))
     };
     // Live chunking only pays off when the model keeps up with speech. Decide from the model
     // actually loaded, so a slow model transcribes once at stop rather than fighting a
@@ -485,6 +504,7 @@ pub async fn start_recording(
         state.status.clone(),
         state.chunk_state.clone(),
         language,
+        noise_suppression,
         live_chunking,
     ));
     {

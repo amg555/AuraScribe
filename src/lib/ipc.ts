@@ -19,6 +19,8 @@ export interface Settings {
   onboarded: boolean
   /** When false, the global dictation hotkey is unregistered — the app "sleeps" until re-enabled. */
   hotkey_enabled: boolean
+  /** When true, spectral noise reduction runs over the audio before transcription. Default false. */
+  noise_suppression: boolean
 }
 
 export interface Status {

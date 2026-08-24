@@ -7,6 +7,7 @@ mod chunking;
 mod cleanup;
 mod commands;
 mod db;
+mod denoise;
 mod engine;
 mod expand;
 mod hotkey;

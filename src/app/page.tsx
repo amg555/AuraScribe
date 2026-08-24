@@ -42,6 +42,7 @@ const DEFAULT_SETTINGS: Settings = {
   // read never flashes the walkthrough. A genuine fresh install reports onboarded=false.
   onboarded: true,
   hotkey_enabled: true,
+  noise_suppression: false,
 }
 
 /** Frameless-window controls. No-op outside Tauri (e.g. the browser preview). */

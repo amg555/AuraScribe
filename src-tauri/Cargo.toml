@@ -38,6 +38,8 @@ serde_json = "1.0"
 
 # Audio
 cpal = "0.15"
+# Pure-Rust FFT (no C deps) for the optional spectral noise reduction in denoise.rs.
+rustfft = "6"
 
 # Whisper.cpp bindings (requires libclang for bindgen).
 # 0.16 bundles a modern whisper.cpp, which is what makes large-v3-turbo and the

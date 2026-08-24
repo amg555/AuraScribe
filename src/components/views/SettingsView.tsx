@@ -406,6 +406,14 @@ export function SettingsView({
             ? 'This model transcribes English only. Multilingual dictation needs a multilingual model.'
             : 'This model uses the language you pick above.'}
         </p>
+        <div className="mt-4">
+          <Toggle
+            checked={settings.noise_suppression}
+            onChange={(v) => onSaveSettings({ noise_suppression: v })}
+            label="Reduce background noise"
+            hint="Cuts steady noise (fans, AC, traffic hum) before transcription, on your device. Best in a consistently noisy room; leave off in a quiet one."
+          />
+        </div>
       </Section>
 
       <Section title="Application">
