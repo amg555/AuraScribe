@@ -9,12 +9,18 @@ on:
 
 # Two gates that run on every push to master AND every pull request:
 #   - frontend: typecheck + build (fast).
-#   - rust-tests: `cargo test` on Linux (compiles whisper.cpp from source, ~8-12 min).
+#   - rust-tests: `cargo test` on Linux with the DEFAULT features (whisper + moonshine), so it
+#     compiles whisper.cpp from source AND the sherpa-onnx stack (~8-12 min).
 #
 # The Rust job exists specifically so a contribution that breaks a test (e.g. the cleanup
 # punctuation test in PR #1) shows a red check on the PR automatically, instead of relying on
-# someone remembering to run `cargo test` locally. Default features only (no `moonshine`), so it
-# does not download the sherpa runtime — it's the fast, deterministic test surface.
+# someone remembering to run `cargo test` locally.
+#
+# WHY cache-targets: false (see below): sherpa-rs-sys DOWNLOADS onnxruntime + sherpa-onnx libs
+# during its build and the link step needs them. On a warm Swatinem cache those libs are pruned
+# and the crate isn't rebuilt to re-fetch them, so linking fails with `unable to find library
+# -lonnxruntime`. Not caching the target dir makes every run cold, like the proven first run, so
+# the libs are always freshly downloaded. (Same fix as .github/workflows/release.yml.)
 
 jobs:
   frontend:
@@ -48,6 +54,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          # Don't cache target: sherpa-rs-sys's downloaded onnxruntime/sherpa libs get pruned from a
+          # warm cache, breaking the link. A cold target every run keeps them present. See header.
+          cache-targets: false
 
       # Tauri (webview/tray/audio) system libs + clang/cmake for whisper.cpp's bindgen build.
       - name: Install Linux system dependencies
