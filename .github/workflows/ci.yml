@@ -7,17 +7,14 @@ on:
     branches: [master]
   workflow_dispatch:
 
-# Deliberately frontend-only.
+# Two gates that run on every push to master AND every pull request:
+#   - frontend: typecheck + build (fast).
+#   - rust-tests: `cargo test` on Linux (compiles whisper.cpp from source, ~8-12 min).
 #
-# The Rust side compiles whisper.cpp from source and needs MSVC, libclang and CMake. That is
-# a real 5-10 minute native build, and `--no-default-features` does not currently skip it
-# (`asr.rs` imports `whisper_rs` unconditionally, so the `whisper` feature flag does not
-# actually gate anything). Rather than ship a workflow that goes red on every push, this runs
-# the checks that genuinely pass; the Rust build and tests are verified locally with
-# `build.bat` and `cargo test`. See docs/HANDOFF.md.
-#
-# A green tick here means "the frontend typechecks and builds" — nothing more. Adding a Rust
-# job is worthwhile once the feature flag really gates the dependency.
+# The Rust job exists specifically so a contribution that breaks a test (e.g. the cleanup
+# punctuation test in PR #1) shows a red check on the PR automatically, instead of relying on
+# someone remembering to run `cargo test` locally. Default features only (no `moonshine`), so it
+# does not download the sherpa runtime — it's the fast, deterministic test surface.
 
 jobs:
   frontend:
@@ -39,3 +36,35 @@ jobs:
 
       - name: Build frontend
         run: npm run build:frontend
+
+  rust-tests:
+    name: Rust tests (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      # Tauri (webview/tray/audio) system libs + clang/cmake for whisper.cpp's bindgen build.
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            cmake \
+            clang \
+            libclang-dev
+
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
