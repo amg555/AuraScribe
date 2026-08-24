@@ -80,19 +80,28 @@ fn make_non_activating(window: &tauri::WebviewWindow) {
 fn make_non_activating(_window: &tauri::WebviewWindow) {}
 
 pub fn show(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
-        // Never surface the overlay unless its page confirmed it loaded. A 404, a missing
-        // dev server, or a wrong asset path all render the webview's own opaque error page,
-        // which would then sit on top of everything the user is doing — undecorated,
-        // always-on-top, with no way to dismiss it. Both times this shipped, that error box
-        // was the symptom. Silence is the correct failure mode here.
-        if !READY.load(Ordering::Acquire) {
-            tracing::warn!("Overlay page never reported ready; not showing it");
-            return;
-        }
-        position_bottom_center(&window);
-        let _ = window.show();
+    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
+        tracing::warn!("Overlay window does not exist; cannot show the recording indicator");
+        return;
+    };
+    // Never surface the overlay unless its page confirmed it loaded. A 404, a missing
+    // dev server, or a wrong asset path all render the webview's own opaque error page,
+    // which would then sit on top of everything the user is doing — undecorated,
+    // always-on-top, with no way to dismiss it. Both times this shipped, that error box
+    // was the symptom. Silence is the correct failure mode here.
+    //
+    // A dictation that starts before the page has reported ready is not lost: `overlay_ready`
+    // re-runs this the moment the page loads (see commands.rs), so the indicator still appears.
+    if !READY.load(Ordering::Acquire) {
+        tracing::warn!("Overlay page not ready yet; it will appear once the page loads (overlay_ready)");
+        return;
     }
+    position(&window);
+    let _ = window.show();
+    // Re-assert on-top on every show: another always-on-top window (or the OS) can drop the flag,
+    // which would leave the indicator technically shown but hidden behind the user's app.
+    let _ = window.set_always_on_top(true);
+    tracing::debug!("Overlay indicator shown");
 }
 
 pub fn hide(app: &AppHandle) {
@@ -101,13 +110,29 @@ pub fn hide(app: &AppHandle) {
     }
 }
 
-fn position_bottom_center(window: &tauri::WebviewWindow) {
-    if let Ok(Some(monitor)) = window.primary_monitor() {
-        let screen = monitor.size();
+/// Place the pill near the bottom centre of the monitor the overlay is CURRENTLY on, falling back
+/// to the primary monitor, then to a fixed on-screen spot. Using the current monitor (with its
+/// coordinate offset) keeps the pill on the screen the user is working on in a multi-monitor setup
+/// instead of always parking it on the primary display — a real "sometimes I can't see it" cause.
+fn position(window: &tauri::WebviewWindow) {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    if let Some(m) = monitor {
+        let screen = m.size();
+        let origin = m.position();
         if let Ok(win_size) = window.outer_size() {
-            let x = (screen.width as f64 - win_size.width as f64) / 2.0;
-            let y = screen.height as f64 - win_size.height as f64 - 96.0;
-            let _ = window.set_position(PhysicalPosition::new(x.max(0.0), y.max(0.0)));
+            let x = origin.x as f64 + (screen.width as f64 - win_size.width as f64) / 2.0;
+            let y = origin.y as f64 + screen.height as f64 - win_size.height as f64 - 96.0;
+            let _ = window.set_position(PhysicalPosition::new(
+                x.max(origin.x as f64),
+                y.max(origin.y as f64),
+            ));
+            return;
         }
     }
+    // Last resort: somewhere clearly on-screen rather than an unpredictable default position.
+    let _ = window.set_position(PhysicalPosition::new(120.0, 120.0));
 }

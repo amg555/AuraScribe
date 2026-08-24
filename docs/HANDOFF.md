@@ -6,7 +6,9 @@
 > and append a dated entry to `docs/PROJECT-JOURNAL.md` for any **major** change — see
 > `docs/MAINTAINING-DOCS.md` for the rules.
 
-**Last updated:** 2026-08-18 (**v2.0.0** — first cross-platform release: CI now green on Windows/macOS/Linux. Fixed the warm-cache Windows DLL regression, switched Linux to a reliable `.deb`, and made the macOS `.dmg` self-contained: rpath in build.rs + embedded sherpa/ONNX dylibs + ad-hoc signing. New `docs/INSTALL.md` with macOS Gatekeeper steps. README + ARCHITECTURE.md rewritten for cross-platform. macOS/Linux model-loading still needs an on-device check — see below) &nbsp;·&nbsp; **Owner:** Jeswin Thomas Jestin
+**Last updated:** 2026-08-25 (merged PR #1 — History transcript search + single-item delete, Insights streak share card, and no-period-on-1-2-word cleanup (verified 72/0). **Overlay reliability fix** — the "I hear the sound but see no overlay" bug: overlay page now seeds authoritative status via `get_status` on mount (not events alone), `overlay_ready` catches up if a dictation is already running, and positioning uses the current monitor. Compiles + 72/0; needs an on-device rebuild to confirm. See below) &nbsp;·&nbsp; **Owner:** Jeswin Thomas Jestin
+
+**Prior update:** 2026-08-18 (**v2.0.0** — first cross-platform release: CI now green on Windows/macOS/Linux. Fixed the warm-cache Windows DLL regression, switched Linux to a reliable `.deb`, and made the macOS `.dmg` self-contained: rpath in build.rs + embedded sherpa/ONNX dylibs + ad-hoc signing. New `docs/INSTALL.md` with macOS Gatekeeper steps. README + ARCHITECTURE.md rewritten for cross-platform. macOS/Linux model-loading still needs an on-device check — see below) &nbsp;·&nbsp; **Owner:** Jeswin Thomas Jestin
 
 **Insights Stage 2 — shipped as v1.2.0:** the **yearly "Your Year" recap** (`year_recap` +
 `RecapView`, reachable from Insights year-round, own sidebar entry Dec–Jan) and **shareable PNG cards**
@@ -89,6 +91,33 @@ machine-path leaks in the pushable tree.
 - **PROCESS RULE:** there must be exactly ONE AuraScribe installed. To show the owner a change,
   rebuild the installer and reinstall (elevated, replacing Program Files) — never launch a loose
   `target\*` build. Ignoring this caused the recurring "old UI" confusion (Round 19).
+
+### 2026-08-25 — overlay "I hear the sound but see nothing" bug + PR #1 merged
+
+**PR #1 (external, `amg555`) merged** after review + local verify (cargo test 72/0, tsc clean, moonshine
+build): History gets **transcript search** (`search_transcripts`, parameterized) and **single-item
+delete** (`delete_transcript`), Insights gets a **streak share card** (reuses `shareCard.ts`), and
+cleanup now **skips the trailing period on 1–2 word dictations** (so "git status" / "Kubernetes" stay
+clean; a genuine short sentence like "Ship it" also gets no period — an accepted product call, test
+updated to match). Squash-merged as `cbada1a`. Note: the repo still has **no CI on PRs** — verification
+was manual; adding a `cargo test` + `tsc` PR workflow is the standing fix (offered, not yet built).
+
+**Overlay reliability fix (owner-reported: hotkey plays the sound but no indicator appears, "at some
+times").** Root-caused three independent failure paths, all fixed:
+1. **Startup race** — `overlay::show` bails when the page hasn't reported `overlay_ready`, and `READY`
+   is set once per session; a dictation started ~1s after launch could hide the overlay for the whole
+   session. Fix: `overlay_ready` (now async, takes app+state) **catches up** — if a dictation is
+   already active when the page loads, it shows the overlay immediately.
+2. **Blank-window race** — the window's visibility is Rust-controlled but its *content* depended solely
+   on catching one `status-changed` event; a missed event left the window shown but rendering `null`.
+   Fix: `overlay/page.tsx` now **seeds authoritative status via `get_status` on mount** (events are the
+   fast path, not the only path — the exact CLAUDE.md rule). `get_status`/`getStatus` already existed.
+3. **Wrong-monitor** — `position_bottom_center` used the PRIMARY monitor, so on multi-monitor it could
+   park the pill on a screen the user wasn't looking at. Fix: `position()` uses `current_monitor()`
+   (with its coordinate offset) → primary → a fixed on-screen fallback; also re-asserts always-on-top
+   on every show, and logs `Overlay indicator shown` / the not-ready reason so the log pinpoints any
+   recurrence. Compiles + 72/0; **the runtime behaviour needs an on-device rebuild+reinstall to confirm**
+   (can't reproduce an intermittent windowing bug from the sandbox).
 
 ### 2026-08-18 — v2.0.0: cross-platform release CI goes green (Win/Mac/Linux) + macOS self-contained
 

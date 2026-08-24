@@ -1149,8 +1149,24 @@ pub async fn get_log_file_path() -> Result<String, String> {
 /// Called by the overlay page once it has mounted. Until this arrives the overlay is never
 /// shown, so a page that failed to load cannot park an error box on the user's screen.
 #[command]
-pub fn overlay_ready() {
+pub async fn overlay_ready(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     crate::overlay::mark_ready();
+    // If a dictation is already running when the overlay page finishes loading (the user pressed
+    // the hotkey within a second or two of launch, before the overlay webview was ready), then
+    // READY was set too late for that dictation's emit_status call to show anything. Catch up now
+    // so the indicator appears for the dictation already in progress instead of staying hidden for
+    // the whole session.
+    let is_active = {
+        let status = state.status.lock().await;
+        status.is_recording || status.is_processing
+    };
+    if is_active {
+        crate::overlay::show(&app);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

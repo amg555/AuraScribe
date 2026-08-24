@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Mic, Loader2, Square } from 'lucide-react'
-import { overlayReady, stopRecording } from '@/lib/ipc'
+import { overlayReady, stopRecording, getStatus } from '@/lib/ipc'
 import { listen } from '@tauri-apps/api/event'
 
 // Field names must match the Rust `Status` wire format exactly. They are snake_case;
@@ -23,13 +23,26 @@ export default function OverlayPage() {
     document.body.style.background = 'transparent'
 
     let unlisten: (() => void) | null = null
+    let cancelled = false
+
+    // Seed from the AUTHORITATIVE status first. Events are the fast path, not the only path:
+    // if a `status-changed` event is ever missed (or the overlay is shown a beat before the
+    // event lands), this guarantees the pill still renders instead of the window showing blank.
+    getStatus()
+      .then((s) => {
+        if (!cancelled) setStatus({ is_recording: s.is_recording, is_processing: s.is_processing })
+      })
+      .catch(() => {})
+
     listen<Status>('status-changed', (e) => setStatus(e.payload)).then((fn) => {
       unlisten = fn
-      // Only announce readiness once we can actually receive status, so the backend never
-      // shows a window that would render blank.
+      // Announce readiness once we can actually receive status. If a dictation is already in
+      // progress at this moment (hotkey pressed right after launch), the backend shows the
+      // overlay as part of handling this call — see `overlay_ready` in commands.rs.
       overlayReady().catch(() => {})
     })
     return () => {
+      cancelled = true
       unlisten?.()
     }
   }, [])
