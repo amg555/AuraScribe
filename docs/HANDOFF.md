@@ -6,7 +6,7 @@
 > and append a dated entry to `docs/PROJECT-JOURNAL.md` for any **major** change — see
 > `docs/MAINTAINING-DOCS.md` for the rules.
 
-**Last updated:** 2026-08-25 (merged PR #1 — History transcript search + single-item delete, Insights streak share card, and no-period-on-1-2-word cleanup (verified 72/0). **Overlay reliability fix** — the "I hear the sound but see no overlay" bug: overlay page now seeds authoritative status via `get_status` on mount (not events alone), `overlay_ready` catches up if a dictation is already running, and positioning uses the current monitor. Compiles + 72/0; needs an on-device rebuild to confirm. See below) &nbsp;·&nbsp; **Owner:** Jeswin Thomas Jestin
+**Last updated:** 2026-08-25 (merged PR #1; **overlay reliability fix**; **PR CI** now runs `cargo test`+`tsc` on every PR (green on the runner); **opt-in spectral noise reduction** (`denoise.rs`, FFT spectral subtraction, off by default, 5 unit tests, 77/0). Overlay + noise-room efficacy need an on-device rebuild/mic to confirm. Prompt-optimization engine = still a spec-first item (needs a local-LLM dependency; not built). See below) &nbsp;·&nbsp; **Owner:** Jeswin Thomas Jestin
 
 **Prior update:** 2026-08-18 (**v2.0.0** — first cross-platform release: CI now green on Windows/macOS/Linux. Fixed the warm-cache Windows DLL regression, switched Linux to a reliable `.deb`, and made the macOS `.dmg` self-contained: rpath in build.rs + embedded sherpa/ONNX dylibs + ad-hoc signing. New `docs/INSTALL.md` with macOS Gatekeeper steps. README + ARCHITECTURE.md rewritten for cross-platform. macOS/Linux model-loading still needs an on-device check — see below) &nbsp;·&nbsp; **Owner:** Jeswin Thomas Jestin
 
@@ -118,6 +118,31 @@ times").** Root-caused three independent failure paths, all fixed:
    on every show, and logs `Overlay indicator shown` / the not-ready reason so the log pinpoints any
    recurrence. Compiles + 72/0; **the runtime behaviour needs an on-device rebuild+reinstall to confirm**
    (can't reproduce an intermittent windowing bug from the sandbox).
+
+**PR CI added (2026-08-25).** `.github/workflows/ci.yml` now has a `rust-tests` job (`cargo test`
+on Linux, default features, installs the Tauri/whisper build deps) alongside the frontend checks, on
+push + PR. Confirmed green on the runner. This is the standing fix for "no automated gate on
+contributions" — a broken Rust test now shows a red check on the PR (the gap that let PR #1's failing
+test through until caught by hand).
+
+**Opt-in noise reduction shipped (2026-08-25) — `src-tauri/src/denoise.rs`.** The energy-based
+pipeline can't tell a loud voice from loud steady noise; this adds STFT **spectral subtraction**:
+estimate the noise spectrum from the quietest ~10% of frames (pauses are noise-only in a noisy room),
+subtract per-bin with a 10%-of-magnitude floor (avoids musical-noise artefacts). **Safe by design:**
+on clean audio the quiet frames are near-silent → noise estimate ≈ 0 → ~identity, so it can't wreck a
+clean recording. Pure Rust (`rustfft`), no model. Exposed as a **"Reduce background noise" setting,
+OFF by default** (migration `009_noise_suppression.sql`); wired into `transcribe_chunk` before
+trim/gain when enabled. **5 synthetic unit tests pass** (reduces steady noise, preserves voice,
+near-identity on clean, edge cases) + 77/0 overall. **Still owner-work:** real-room efficacy and the
+`strength` (1.5) tuning need a mic; a trained **Silero VAD** model is the heavier follow-up for hard
+non-stationary noise (nature sounds, overlapping speech) — this DSP layer handles *steady* noise.
+
+**Prompt-optimization engine — NOT built (deliberately).** Requested, but it requires an on-device
+instruct LLM (llama.cpp/GGUF — a heavy new build dep like whisper.cpp + a ~1 GB model download +
+seconds-per-generation latency) and, per this doc's own rule, "needs its own research + spec before
+any code." It can't be verified from the sandbox (no way to run generation), and shipping blind LLM
+code would violate the never-fake / verify-by-running non-negotiable. Next step is a spec + a POC the
+owner runs, not a blind commit.
 
 ### 2026-08-18 — v2.0.0: cross-platform release CI goes green (Win/Mac/Linux) + macOS self-contained
 
