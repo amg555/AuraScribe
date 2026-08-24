@@ -28,6 +28,14 @@ const PASTE_THRESHOLD: usize = 120;
 /// queue drains between batches.
 const CHUNK_EVENTS: usize = 40;
 
+/// How long to keep the dictated text on the clipboard before restoring what was there before.
+/// The paste is asynchronous: the target reads the clipboard only when it gets around to
+/// processing Ctrl+V. Restore too soon and a target that reads a beat late pastes the OLD
+/// contents instead of the dictation — the reported "it pasted my clipboard, not what I said"
+/// bug. This is generous (the old value 120 ms was too tight under load) and, because the restore
+/// runs on a background thread, it does not slow the dictation down.
+const RESTORE_DELAY_MS: u64 = 500;
+
 pub struct TextInjector;
 
 impl TextInjector {
@@ -74,22 +82,29 @@ impl TextInjector {
     #[cfg(target_os = "windows")]
     fn paste_text(&self, text: &str) -> Result<(), String> {
         let previous = read_clipboard_text();
-
         set_clipboard_text(text)?;
 
-        let result = send_ctrl_v();
-
-        // The paste is asynchronous — the target reads the clipboard when it processes the
-        // keystroke. Restoring immediately would race it and paste the old contents.
-        std::thread::sleep(std::time::Duration::from_millis(120));
-
-        if let Some(prev) = previous {
-            let _ = set_clipboard_text(&prev);
+        match send_ctrl_v() {
+            Ok(()) => {
+                // Restore the previous clipboard LATER, on a background thread, so a slow target
+                // still reads our dictation (not the restored value) and the dictation itself
+                // isn't delayed. Only restore if the clipboard still holds exactly what we put
+                // there — if the user copied something new meanwhile, leave their copy alone.
+                if let Some(prev) = previous {
+                    let ours = text.to_string();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(RESTORE_DELAY_MS));
+                        if read_clipboard_text().as_deref() == Some(ours.as_str()) {
+                            let _ = set_clipboard_text(&prev);
+                        }
+                    });
+                }
+                Ok(())
+            }
+            // Ctrl+V didn't fire. Leave OUR text on the clipboard so the message below is true and
+            // the user can paste it by hand — restoring `previous` here would wipe the dictation.
+            Err(e) => Err(format!("{e}; the text is on your clipboard — paste it with Ctrl+V")),
         }
-
-        result.map_err(|e| {
-            format!("{e}; the text is on your clipboard — paste it with Ctrl+V")
-        })
     }
 
     /// Synthesize the text as real keystrokes, in small batches.
@@ -203,10 +218,20 @@ fn paste_text(text: &str) -> Result<(), String> {
     enigo.key(Key::Unicode('v'), Direction::Click).map_err(|e| e.to_string())?;
     enigo.key(modifier, Direction::Release).map_err(|e| e.to_string())?;
 
-    // The paste is asynchronous — the target reads the clipboard when it processes the keystroke.
-    std::thread::sleep(std::time::Duration::from_millis(120));
+    // Restore the previous clipboard LATER, on a background thread, and only if it still holds our
+    // dictation — same reasoning as the Windows path: restoring too soon lets a slow target paste
+    // the old contents. Best-effort on Linux/X11, where clipboard ownership is tied to a live
+    // process (a background thread in this same process is fine).
     if let Some(prev) = previous {
-        let _ = clipboard.set_text(prev);
+        let ours = text.to_string();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(RESTORE_DELAY_MS));
+            if let Ok(mut cb) = Clipboard::new() {
+                if cb.get_text().ok().as_deref() == Some(ours.as_str()) {
+                    let _ = cb.set_text(prev);
+                }
+            }
+        });
     }
     Ok(())
 }
